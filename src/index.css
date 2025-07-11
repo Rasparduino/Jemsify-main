@@ -1,0 +1,107 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Define color variables for each theme */
+:root.theme-cyan {
+  --color-bg-primary: #0B0C10;
+  --color-bg-secondary: #1F2833;
+  --color-text-primary: #C5C6C7;
+  --color-text-secondary: #6c7a89;
+  --color-accent: #66FCF1;
+  --color-accent-secondary: #45A29E;
+}
+
+:root.theme-synthwave {
+  --color-bg-primary: #2A1B3D;
+  --color-bg-secondary: #4A3267;
+  --color-text-primary: #F3D9E5;
+  --color-text-secondary: #C6BADE;
+  --color-accent: #DE638A;
+  --color-accent-secondary: #F7B9C4;
+}
+
+:root.theme-dracula {
+  --color-bg-primary: #282a36;
+  --color-bg-secondary: #44475a;
+  --color-text-primary: #f8f8f2;
+  --color-text-secondary: #bd93f9;
+  --color-accent: #50fa7b;
+  --color-accent-secondary: #ff79c6;
+}
+
+:root.theme-nord {
+  --color-bg-primary: #2E3440;
+  --color-bg-secondary: #3B4252;
+  --color-text-primary: #ECEFF4;
+  --color-text-secondary: #88C0D0;
+  --color-accent: #8FBCBB;
+  --color-accent-secondary: #5E81AC;
+}
+
+/* Apply base styles */
+body {
+  font-family: 'Inter', sans-serif;
+  @apply bg-primary text-primary transition-colors duration-300;
+}
+
+/* Custom scrollbar to match themes */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-secondary;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-text-secondary);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+   background-color: var(--color-accent);
+}
+
+/* ===== EPIC LOADER CSS START ===== */
+#app-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--color-bg-primary);
+  transition: opacity 0.5s ease-out;
+}
+
+#app-loader.fade-out {
+  opacity: 0;
+}
+
+.loader-animation {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  height: 50px;
+}
+
+.bar {
+  width: 10px;
+  height: 10px;
+  background-color: var(--color-accent);
+  border-radius: 5px;
+  animation: pulse 1.2s infinite ease-in-out;
+}
+
+.bar:nth-child(2) { animation-delay: 0.1s; }
+.bar:nth-child(3) { animation-delay: 0.2s; }
+.bar:nth-child(4) { animation-delay: 0.3s; }
+.bar:nth-child(5) { animation-delay: 0.4s; }
+
+@keyframes pulse {
+  0%, 40%, 100% {
+    transform: scaleY(0.4);
+  }
+  20% {
+    transform: scaleY(1.0);
+  }
+}
+/* ===== EPIC LOADER CSS END ===== */
