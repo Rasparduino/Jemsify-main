@@ -142,36 +142,22 @@ export const SpotifyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setCurrentTrack(playQueue[nextIndex]);
     setIsPlaying(true);
   }, [playQueue, currentTrackIndex, isShuffled, repeatMode, audioRef]);
-
+  
+  // --- FIX: This useEffect now ONLY handles the 'ended' event to prevent loops ---
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-
-    const handlePlay = () => {
-        setIsPlaying(true);
-        if (currentTrack) updateNowPlayingStatus(currentTrack);
-    };
-    const handlePause = () => {
-        // This check is important. We don't want to set isPlaying to false
-        // if the song just ended, because nextTrack() will handle the state.
-        if (audio.ended) return;
-        setIsPlaying(false);
-        updateNowPlayingStatus(null);
-    };
 
     const handleEnded = () => {
         nextTrack();
     };
 
-    audio.addEventListener('play', handlePlay);
-    audio.addEventListener('pause', handlePause);
     audio.addEventListener('ended', handleEnded);
     return () => {
-      audio.removeEventListener('play', handlePlay);
-      audio.removeEventListener('pause', handlePause);
       audio.removeEventListener('ended', handleEnded);
     };
-  }, [audioRef, currentTrack, updateNowPlayingStatus, nextTrack]);
+  }, [audioRef, nextTrack]);
+
 
   const isLiked = useCallback((spotifyId: string) => likedTracks.some(t => t.spotifyId === spotifyId), [likedTracks]);
 
@@ -207,18 +193,12 @@ export const SpotifyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [token, isLiked, API_URL]);
 
+  // --- FIX: togglePlayPause now only sets the state, it doesn't touch the audio element ---
   const togglePlayPause = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio || !audio.src || audio.src === window.location.href) {
-        setIsPlaying(false);
-        return;
+    if (currentTrack) {
+        setIsPlaying(prev => !prev);
     }
-    if (audio.paused) {
-        audio.play().catch(e => console.error("Play error:", e));
-    } else {
-        audio.pause();
-    }
-  }, [audioRef]);
+  }, [currentTrack]);
   
   const playTrack = useCallback((track: Track, context: Track[] = []) => {
     addRecentlyPlayed(track);
@@ -237,32 +217,37 @@ export const SpotifyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setCurrentTrackIndex(trackIndex > -1 ? trackIndex : 0);
   }, [currentTrack?.spotifyId, addRecentlyPlayed, togglePlayPause, isShuffled]);
   
+  // --- FIX: This "Commander" useEffect is now the single source of truth for playback ---
   useEffect(() => {
     const audio = audioRef.current;
     if (!currentTrack || !audio) return;
 
-    if (!isPlaying) {
-      audio.pause();
-      return;
-    }
-
-    const downloaded = downloadedTracks.find(d => d.spotifyId === currentTrack.spotifyId);
-
-    if (downloaded) {
-      const sourceUrl = streamTrack(downloaded.downloadId);
-      if (audio.src !== sourceUrl) {
-        audio.src = sourceUrl;
+    if (isPlaying) {
+      const downloaded = downloadedTracks.find(d => d.spotifyId === currentTrack.spotifyId);
+      if (downloaded) {
+        const sourceUrl = streamTrack(downloaded.downloadId);
+        if (audio.src !== sourceUrl) {
+          audio.src = sourceUrl;
+        }
+        audio.play().catch(e => {
+            console.error("Audio play failed, setting isPlaying to false:", e);
+            setIsPlaying(false);
+        });
+        updateNowPlayingStatus(currentTrack);
+      } else {
+        // Not downloaded, so we can't play it. Pause and attempt to download.
+        setIsPlaying(false); // Update state to reflect it's not playing
+        if (!isDownloading(currentTrack.spotifyId) && currentTrack.artist !== 'YouTube Search') {
+          const trackForDownload = { id: currentTrack.spotifyId, name: currentTrack.name, artist: currentTrack.artist, imageUrl: currentTrack.imageUrl };
+          downloadTrack(trackForDownload);
+        }
       }
-      audio.play().catch(e => console.error("Play error:", e));
     } else {
       audio.pause();
-      audio.src = '';
-      if (!isDownloading(currentTrack.spotifyId) && currentTrack.artist !== 'YouTube Search') {
-        const trackForDownload = { id: currentTrack.spotifyId, name: currentTrack.name, artist: currentTrack.artist, imageUrl: currentTrack.imageUrl };
-        downloadTrack(trackForDownload);
-      }
+      updateNowPlayingStatus(null);
     }
-  }, [currentTrack, downloadedTracks, isPlaying, isDownloading, streamTrack, downloadTrack]);
+  }, [currentTrack, isPlaying, downloadedTracks]); // Simplified deps slightly for clarity
+
   
   useEffect(() => {
     if (preDownloadTimerRef.current) {
