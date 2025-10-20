@@ -1,23 +1,57 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Play, Download, Loader, PlusCircle, User } from 'lucide-react';
+import { Search, Play, Loader, PlusCircle, User, ListPlus } from 'lucide-react';
 import { useSpotify, Track, Artist } from '../context/SpotifyContext';
 import { useServer } from '../context/ServerContext';
 import { PlaylistSelectionModal } from './PlaylistSelectionModal';
 import { motion, AnimatePresence } from 'framer-motion';
+// --- FIX: Import the new DownloadButton ---
+import { DownloadButton } from './DownloadButton';
 
-const containerVariants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.05,
-    },
-  },
-};
+const containerVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.05 } } };
+const itemVariants = { hidden: { y: 20, opacity: 0 }, visible: { y: 0, opacity: 1 } };
 
-const itemVariants = {
-  hidden: { y: 20, opacity: 0 },
-  visible: { y: 0, opacity: 1 },
+// --- FIX: The props for this component are now much simpler ---
+const SearchTrackItem: React.FC<{
+  track: Track;
+  onPlay: () => void;
+  onAddToQueue: () => void;
+  onAddToPlaylist: () => void;
+}> = ({ track, onPlay, onAddToQueue, onAddToPlaylist }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <motion.div layout className="bg-secondary/50 rounded-lg overflow-hidden transition-colors" variants={itemVariants}>
+      <div 
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="flex items-center gap-3 p-3 cursor-pointer"
+      >
+        <img src={track.imageUrl || 'https://via.placeholder.com/64'} alt={track.name} className="w-12 h-12 rounded-md flex-shrink-0 object-cover bg-gray-800"/>
+        <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-text-primary truncate">{track.name}</h3>
+            <p className="text-sm text-text-secondary truncate">{track.artist}</p>
+        </div>
+      </div>
+      
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            key="content"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            className="flex justify-evenly items-center py-2 border-t border-secondary/50"
+          >
+            <button onClick={onPlay} title="Play" className="p-2 rounded-full text-text-secondary hover:text-accent transition-colors"><Play size={22} /></button>
+            <button onClick={onAddToQueue} title="Add to queue" className="p-2 rounded-full text-text-secondary hover:text-accent transition-colors"><ListPlus size={22} /></button>
+            <button onClick={onAddToPlaylist} title="Add to playlist" className="p-2 rounded-full text-text-secondary hover:text-accent transition-colors"><PlusCircle size={22} /></button>
+            {/* --- FIX: The complex download logic is replaced by our new component --- */}
+            <DownloadButton track={track} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
 };
 
 interface MobileSearchProps {
@@ -27,8 +61,9 @@ interface MobileSearchProps {
 export const MobileSearch: React.FC<MobileSearchProps> = ({ onArtistSelect }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  const { searchResults, searchArtists, searchTracks, playTrack } = useSpotify();
-  const { downloadTrack, isDownloading, downloadedTracks, youtubeSearch } = useServer();
+  const { searchResults, searchArtists, searchTracks, playTrack, addToQueue } = useSpotify();
+  // --- FIX: We no longer need all the download state here directly ---
+  const { downloadedTracks, youtubeSearch } = useServer();
   
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -66,16 +101,6 @@ export const MobileSearch: React.FC<MobileSearchProps> = ({ onArtistSelect }) =>
     }
   }, [downloadedTracks, trackIdToPlay, playTrack]);
 
-  const handleDownload = (track: any) => {
-    const trackForDownload = {
-        id: track.spotifyId,
-        name: track.name,
-        artist: track.artist,
-        imageUrl: track.imageUrl,
-    };
-    downloadTrack(trackForDownload);
-  };
-
   const handleYoutubeSearch = async () => {
     if (searchQuery.trim().length > 0) {
       searchInputRef.current?.blur();
@@ -95,16 +120,8 @@ export const MobileSearch: React.FC<MobileSearchProps> = ({ onArtistSelect }) =>
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      handleYoutubeSearch();
+      searchInputRef.current?.blur();
     }
-  };
-
-  const isTrackDownloaded = (trackId: string): boolean => {
-    return downloadedTracks.some(d => d.spotifyId === trackId);
-  };
-
-  const searchByCategory = (genre: string) => {
-    setSearchQuery(`genre:${genre}`);
   };
 
   const renderContent = () => {
@@ -127,29 +144,6 @@ export const MobileSearch: React.FC<MobileSearchProps> = ({ onArtistSelect }) =>
     const hasResults = searchResults.length > 0 || searchArtists.length > 0;
 
     if (hasResults) {
-        const trackItem = (track: Track) => (
-            <div className="flex items-center gap-3 p-2 bg-secondary/50 hover:bg-secondary rounded-lg transition-colors group">
-                <img src={track.imageUrl || 'https://via.placeholder.com/64'} alt={track.name} className="w-14 h-14 rounded-md flex-shrink-0 object-cover bg-gray-800"/>
-                <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-text-primary truncate">{track.name}</h3>
-                    <p className="text-sm text-text-secondary truncate">{track.artist}</p>
-                </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => setModalTrack(track)} title="Add to playlist" className="p-2 rounded-full text-text-secondary hover:text-white"><PlusCircle size={20} /></button>
-                    {isDownloading(track.spotifyId) ? (
-                        <div className="p-2 text-blue-500"><Loader size={18} className="animate-spin" /></div>
-                    ) : !isTrackDownloaded(track.spotifyId) && (
-                        <button onClick={() => handleDownload(track)} title="Download" className="p-2 rounded-full text-text-secondary hover:text-white">
-                            <Download size={18} />
-                        </button>
-                    )}
-                </div>
-                <button onClick={() => playTrack(track, searchResults)} className="p-2 w-10 h-10 flex items-center justify-center rounded-full bg-accent text-primary shadow-lg group-hover:scale-110 transition-transform">
-                    <Play size={18} fill="currentColor" />
-                </button>
-            </div>
-        );
-
         return (
             <motion.div
                 key="results"
@@ -163,10 +157,14 @@ export const MobileSearch: React.FC<MobileSearchProps> = ({ onArtistSelect }) =>
                     <div>
                         <h2 className="text-xl font-bold mb-2 text-text-primary">Songs</h2>
                         <div className="space-y-2">
-                            {searchResults.slice(0, 3).map((track) => (
-                                <motion.div key={track.spotifyId} variants={itemVariants}>
-                                    {trackItem(track)}
-                                </motion.div>
+                            {searchResults.slice(0, 4).map((track) => (
+                                <SearchTrackItem
+                                  key={track.spotifyId}
+                                  track={track}
+                                  onPlay={() => playTrack(track, searchResults)}
+                                  onAddToQueue={() => addToQueue(track)}
+                                  onAddToPlaylist={() => setModalTrack(track)}
+                                />
                             ))}
                         </div>
                     </div>
@@ -174,19 +172,19 @@ export const MobileSearch: React.FC<MobileSearchProps> = ({ onArtistSelect }) =>
                 
                 {searchArtists.length > 0 && (
                     <div>
-                        <h2 className="text-xl font-bold mb-2 text-text-primary">Artists</h2>
+                        <h2 className="text-xl font-bold mt-6 mb-2 text-text-primary">Artists</h2>
                         <div className="space-y-2">
-                            {searchArtists.slice(0, 3).map((artist) => (
+                            {searchArtists.slice(0, 4).map((artist) => (
                                 <motion.div
                                     key={artist.spotifyId}
                                     variants={itemVariants}
                                     onClick={() => onArtistSelect(artist.spotifyId)}
-                                    className="flex items-center gap-3 p-2 bg-secondary/50 hover:bg-secondary rounded-lg transition-colors group cursor-pointer"
+                                    className="flex items-center gap-3 p-3 bg-secondary/50 hover:bg-secondary rounded-lg transition-colors group cursor-pointer"
                                 >
                                     {artist.imageUrl ? (
-                                        <img src={artist.imageUrl} alt={artist.name} className="w-14 h-14 rounded-full flex-shrink-0 object-cover bg-gray-800" />
+                                        <img src={artist.imageUrl} alt={artist.name} className="w-12 h-12 rounded-full flex-shrink-0 object-cover bg-gray-800" />
                                     ) : (
-                                        <div className="w-14 h-14 rounded-full flex-shrink-0 bg-secondary flex items-center justify-center"><User size={28} /></div>
+                                        <div className="w-12 h-12 rounded-full flex-shrink-0 bg-secondary flex items-center justify-center"><User size={24} /></div>
                                     )}
                                     <div className="flex-1 min-w-0">
                                         <h3 className="font-semibold text-text-primary truncate">{artist.name}</h3>
@@ -219,7 +217,7 @@ export const MobileSearch: React.FC<MobileSearchProps> = ({ onArtistSelect }) =>
             { name: 'Rock', color: 'bg-red-700' },
             { name: 'Electronic', color: 'bg-blue-500' }
           ].map((category) => (
-            <div key={category.name} onClick={() => searchByCategory(category.name.toLowerCase())} className={`h-24 ${category.color} rounded-lg p-3 flex items-end font-bold text-lg shadow-lg cursor-pointer`}>
+            <div key={category.name} onClick={() => setSearchQuery(`genre:${category.name.toLowerCase()}`)} className={`h-24 ${category.color} rounded-lg p-3 flex items-end font-bold text-lg shadow-lg cursor-pointer`}>
               {category.name}
             </div>
           ))}

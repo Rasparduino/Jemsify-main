@@ -86,6 +86,34 @@ exports.getArtistAlbums = async function(artistId, limit = 50) {
     }
 }
 
+exports.getPlaylist = async function(playlistId) {
+    const token = await exports.getAccessToken();
+    try {
+        const playlistResponse = await axios.get(`https://api.spotify.com/v1/playlists/${playlistId}`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+             params: { market: 'US' } 
+        });
+
+        const playlistData = playlistResponse.data;
+        let tracks = playlistData.tracks.items;
+
+        let nextUrl = playlistData.tracks.next;
+        while (nextUrl) {
+            const nextPageResponse = await axios.get(nextUrl, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            tracks = tracks.concat(nextPageResponse.data.items);
+            nextUrl = nextPageResponse.data.next;
+        }
+        
+        playlistData.tracks.items = tracks.filter(item => item && item.track);
+        return playlistData;
+    } catch (error) {
+        console.error('❌ Spotify get playlist error:', error.response?.data || error.message);
+        throw new Error('Failed to get playlist from Spotify');
+    }
+}
+
 exports.getAlbum = async function(albumId) {
     const token = await exports.getAccessToken();
     try {

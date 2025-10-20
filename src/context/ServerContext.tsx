@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from './AuthContext';
+import { fetchWithRetry } from '../utils/fetchWithRetry';
 
 interface DownloadedTrack {
   downloadId: string;
@@ -13,14 +14,15 @@ interface ServerContextType {
   downloadedTracks: DownloadedTrack[];
   downloadingSpotifyIds: Set<string>;
   isDownloading: (spotifyId: string) => boolean;
+  // --- FIX: Add the new helper function to the context type ---
+  isTrackDownloaded: (spotifyId: string) => DownloadedTrack | undefined;
   downloadTrack: (track: any) => Promise<void>;
   streamTrack: (downloadId: string) => string;
-  // --- NEW: Add function for direct YouTube search ---
   youtubeSearch: (query: string) => Promise<any>;
 }
 
 const ServerContext = createContext<ServerContextType | undefined>(undefined);
-const API_URL = import.meta.env.VITE_API_BASE_URL; // Use the environment variable
+const API_URL = import.meta.env.VITE_API_BASE_URL;
 
 export const useServer = () => {
   const context = useContext(ServerContext);
@@ -38,7 +40,7 @@ export const ServerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const fetchInitialCompletedTracks = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
-      const res = await fetch(`${API_URL}/api/download/completed`);
+      const res = await fetchWithRetry(`${API_URL}/api/download/completed`);
       if (res.ok) {
         const completed = await res.json();
         setDownloadedTracks(completed);
@@ -62,9 +64,8 @@ export const ServerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       
       poller.current = setInterval(async () => {
         try {
-          const res = await fetch(`${API_URL}/api/download/all`);
+          const res = await fetchWithRetry(`${API_URL}/api/download/all`);
           if (!res.ok) {
-              // --- FIX: Stop polling if server is unreachable or errors out ---
               console.error(`[POLLER] Failed to fetch statuses: ${res.status}. Stopping polling.`);
               if (poller.current) clearInterval(poller.current);
               poller.current = null;
@@ -75,11 +76,13 @@ export const ServerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           
           setDownloadingSpotifyIds(currentIds => {
             const nextIds = new Set(currentIds);
+            let stateChanged = false;
             
             allStatuses.forEach(status => {
               if (nextIds.has(status.spotifyId) && (status.status === 'completed' || status.status === 'failed')) {
                 console.log(`[POLLER] Download for ${status.name} finished with status: ${status.status}`);
                 nextIds.delete(status.spotifyId);
+                stateChanged = true;
 
                 if (status.status === 'completed') {
                   setDownloadedTracks(prev => {
@@ -100,7 +103,7 @@ export const ServerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               poller.current = null;
             }
             
-            return nextIds;
+            return stateChanged ? nextIds : currentIds;
           });
 
         } catch (error) {
@@ -122,17 +125,22 @@ export const ServerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return;
     }
     
-    setDownloadingSpotifyIds(prev => new Set(prev).add(track.id));
-    
     try {
-      const res = await fetch(`${API_URL}/api/download`, {
+      const res = await fetchWithRetry(`${API_URL}/api/download`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ spotifyTrack: track })
       });
+      
       if (!res.ok) {
           throw new Error('Server responded with an error to the download request.');
       }
+
+      const data = await res.json();
+      if (data.spotifyId) {
+        setDownloadingSpotifyIds(prev => new Set(prev).add(data.spotifyId));
+      }
+
     } catch (error) {
       console.error('Download request failed:', error);
       setDownloadingSpotifyIds(prev => {
@@ -143,21 +151,24 @@ export const ServerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [downloadedTracks, downloadingSpotifyIds]);
   
-  // --- NEW: Function to handle YouTube search ---
   const youtubeSearch = useCallback(async (query: string) => {
     try {
-        const res = await fetch(`${API_URL}/api/download/youtube-search`, {
+        const res = await fetchWithRetry(`${API_URL}/api/download/youtube-search`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query })
         });
         if (!res.ok) {
             const errData = await res.json();
-            throw new Error(errData.message || 'Server responded with an error to the YouTube search request.');
+            throw new Error(errData.message || 'Server responded with an error.');
         }
+
         const data = await res.json();
-        setDownloadingSpotifyIds(prev => new Set(prev).add(data.spotifyId));
+        if (data.spotifyId) {
+            setDownloadingSpotifyIds(prev => new Set(prev).add(data.spotifyId));
+        }
         return data;
+
     } catch (error) {
         console.error('YouTube search request failed:', error);
         throw error;
@@ -172,8 +183,14 @@ export const ServerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     downloadingSpotifyIds.has(spotifyId), 
   [downloadingSpotifyIds]);
 
+  // --- FIX: Define the new helper function ---
+  const isTrackDownloaded = useCallback((spotifyId: string): DownloadedTrack | undefined => {
+    return downloadedTracks.find(t => t.spotifyId === spotifyId);
+  }, [downloadedTracks]);
+
+
   return (
-    <ServerContext.Provider value={{ downloadedTracks, downloadingSpotifyIds, isDownloading, downloadTrack, streamTrack, youtubeSearch }}>
+    <ServerContext.Provider value={{ downloadedTracks, downloadingSpotifyIds, isDownloading, isTrackDownloaded, downloadTrack, streamTrack, youtubeSearch }}>
       {children}
     </ServerContext.Provider>
   );

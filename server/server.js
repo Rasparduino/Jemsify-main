@@ -17,22 +17,15 @@ const userRoutes = require('./routes/user');
 
 // Import services
 const { cleanupOldFiles } = require('./services/cleanup');
+const { initializeWebSocketServer } = require('./services/websocket'); // Import WebSocket service
 
 const app = express();
-const PORT = process.env.PORT || 3001;
-
-// CORS configuration
-const corsOptions = {
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173'],
-  credentials: true,
-  optionsSuccessStatus: 200
-};
+const PORT = process.env.PORT || 3099;
 
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
-// Serve static uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Request logging
@@ -81,19 +74,15 @@ app.use('*', (req, res) => {
   res.status(404).json({ error: 'Not found', message: `Route ${req.originalUrl} not found` });
 });
 
-// Scheduled cleanup is disabled
-/*
-cron.schedule('0 2 * * *', () => {
-  console.log('🧹 Running scheduled cleanup...');
-  cleanupOldFiles();
-});
-*/
 console.log('🧹 Automatic cache cleanup is disabled.');
 
-
-app.listen(PORT, () => {
-  console.log(`🎵 Spotify Clone Server (JSON DB) v2 running on port ${PORT}`);
+// --- THIS IS THE FIX ---
+// Start the Express server and pass the server instance to the WebSocket initializer
+const server = app.listen(PORT, () => {
+  console.log(`🎵 µSynth Server v2 running on port ${PORT}`);
   console.log(`📁 Downloads directory: ${path.resolve(downloadsDir)}`);
 });
+
+initializeWebSocketServer(server); // Start the WebSocket server
 
 module.exports = app;

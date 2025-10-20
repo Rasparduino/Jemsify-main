@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { useNetworkStatus } from './NetworkStatusContext';
+import { fetchWithRetry } from '../utils/fetchWithRetry';
 
-// Define the track type here to be used by the context
 interface Track {
   spotifyId: string;
   name: string;
@@ -25,13 +26,12 @@ interface AuthContextType {
   signup: (email, password) => Promise<void>;
   logout: () => void;
   addRecentlyPlayed: (track: Track) => Promise<void>;
+  // --- FIX: Expose the function from the context's type definition ---
+  updateNowPlayingStatus: (track: Track | null) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// --- THIS IS THE FIX ---
-// Add a fallback to localhost if the environment variable is not defined.
-// This prevents the 'undefined' error and provides a better developer experience.
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3099';
 
 export const useAuth = () => {
@@ -45,41 +45,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [error, setError] = useState<string | null>(null);
   const [recentlyPlayed, setRecentlyPlayed] = useState<Track[]>([]);
+  const { isOnline } = useNetworkStatus();
 
-  // Add a check to warn the developer if the URL is not set.
-  useEffect(() => {
-    if (!import.meta.env.VITE_API_BASE_URL) {
-      console.warn(
-        `VITE_API_BASE_URL is not set in your .env file. Falling back to ${API_URL}. ` +
-        `This will not work on other devices.`
-      );
-    }
+  const logout = useCallback(() => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setToken(null);
+    setUser(null);
+    setRecentlyPlayed([]);
   }, []);
 
   const fetchRecentlyPlayed = useCallback(async (authToken: string) => {
+    if (!authToken) return;
     try {
-      const res = await fetch(`${API_URL}/api/auth/recently-played`, {
+      const res = await fetchWithRetry(`${API_URL}/api/auth/recently-played`, {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       if (res.ok) {
         const data = await res.json();
         setRecentlyPlayed(data);
       } else {
+        if (res.status === 401) logout();
         setRecentlyPlayed([]);
       }
     } catch (err) {
       console.error("Failed to fetch recently played:", err);
       setRecentlyPlayed([]);
     }
-  }, []);
+  }, [logout]);
+
+  useEffect(() => {
+    if (isOnline && token && !user) {
+        console.log('[AuthContext] Network is back. Re-validating session...');
+        const userString = localStorage.getItem('user');
+        if (userString) {
+            setUser(JSON.parse(userString));
+            fetchRecentlyPlayed(token);
+        }
+    }
+  }, [isOnline, token, user, fetchRecentlyPlayed]);
 
   useEffect(() => {
     const userString = localStorage.getItem('user');
-    if (userString && token) {
+    const storedToken = localStorage.getItem('token');
+    if (userString && storedToken) {
         setUser(JSON.parse(userString));
-        fetchRecentlyPlayed(token);
+        setToken(storedToken);
+        fetchRecentlyPlayed(storedToken);
     }
-  }, [token, fetchRecentlyPlayed]);
+  }, [fetchRecentlyPlayed]);
 
   const handleAuthResponse = async (data) => {
     localStorage.setItem('token', data.token);
@@ -92,7 +106,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (email, password) => {
     try {
-      const res = await fetch(`${API_URL}/api/auth/login`, {
+      const res = await fetchWithRetry(`${API_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -107,7 +121,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   
   const signup = async (email, password) => {
     try {
-      const res = await fetch(`${API_URL}/api/auth/register`, {
+      const res = await fetchWithRetry(`${API_URL}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -119,14 +133,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setError(err.message);
     }
   };
-
-  const logout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    setToken(null);
-    setUser(null);
-    setRecentlyPlayed([]);
-  };
   
   const addRecentlyPlayed = async (track: Track) => {
       if (!token) return;
@@ -135,7 +141,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return [track, ...filtered].slice(0, 20);
       });
       try {
-          await fetch(`${API_URL}/api/auth/recently-played`, {
+          await fetchWithRetry(`${API_URL}/api/auth/recently-played`, {
               method: 'POST',
               headers: { 
                   'Content-Type': 'application/json',
@@ -148,8 +154,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
   };
 
+  // --- FIX: Define the function within the AuthProvider ---
+  const updateNowPlayingStatus = useCallback(async (track: Track | null) => {
+    if (!token) return;
+
+    try {
+        await fetchWithRetry(`${API_URL}/api/user/now-playing`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ track }),
+        });
+    } catch (error) {
+        console.error("Failed to update 'now playing' status:", error);
+    }
+  }, [token]);
+
+
+  const value = { user, token, isAuthenticated: !!token, error, recentlyPlayed, login, signup, logout, addRecentlyPlayed, updateNowPlayingStatus };
+
   return (
-    <AuthContext.Provider value={{ user, token, isAuthenticated: !!token, error, recentlyPlayed, login, signup, logout, addRecentlyPlayed }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

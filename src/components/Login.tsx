@@ -14,7 +14,7 @@ export const Login: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-black text-white p-4">
       <div className="w-full max-w-sm">
-        <h1 className="text-3xl font-bold text-center mb-6">Log in to μSync</h1>
+        <h1 className="text-3xl font-bold text-center mb-6">Log in to μSynth</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           <input
             type="email"

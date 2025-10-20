@@ -7,6 +7,7 @@ import { ThemeProvider } from './context/ThemeContext';
 import { Login } from './components/Login';
 import { Signup } from './components/Signup';
 import { MainApp } from './MainApp';
+import { NetworkStatusProvider } from './context/NetworkStatusContext'; // Import the new provider
 
 // This component contains the providers for the authenticated part of the app
 const AuthenticatedApp: React.FC = () => {
@@ -41,9 +42,13 @@ const AppContent: React.FC = () => {
 function App() {
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
+      {/* --- THIS IS THE FIX --- */}
+      {/* Wrap the AuthProvider with our new NetworkStatusProvider */}
+      <NetworkStatusProvider>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      </NetworkStatusProvider>
     </ThemeProvider>
   );
 }

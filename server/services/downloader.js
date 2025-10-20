@@ -4,6 +4,9 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 
 const downloadsDbPath = path.join(__dirname, '..', 'downloads.json');
+// --- THIS IS THE FIX ---
+// Corrected the mismatched quotes. It now correctly uses single quotes.
+const cookiesPath = '/mnt/musync/cookies.txt';
 
 const readDownloadsDB = () => {
     if (!fs.existsSync(downloadsDbPath)) return { downloads: {} };
@@ -28,119 +31,130 @@ const activeDownloads = new Map();
 
 async function downloadTrack(spotifyTrack) {
     const downloadId = `dl_${Date.now()}_${uuidv4().substring(0, 8)}`;
-    const downloadsDir = process.env.DOWNLOADS_DIR || './downloads';
     
-    // --- FIX: Differentiate search query logic ---
-    let searchQuery;
-    if (spotifyTrack.artist === 'YouTube Search') {
-        // Direct search, use query as-is
-        searchQuery = spotifyTrack.name;
-    } else {
-        // Spotify track, be more specific
-        searchQuery = `${spotifyTrack.name} ${spotifyTrack.artist} lyrics`;
-    }
-    
-    const outputTemplate = path.join(downloadsDir, `${downloadId}.%(ext)s`);
-
     const db = readDownloadsDB();
     db.downloads[downloadId] = {
-        downloadId,
-        spotifyId: spotifyTrack.id,
-        name: spotifyTrack.name,
-        artist: spotifyTrack.artist,
-        imageUrl: spotifyTrack.imageUrl,
-        status: 'queued',
-        progress: 0,
-        startTime: new Date().toISOString(),
-        outputPath: null,
-        error: null,
+        downloadId, spotifyId: spotifyTrack.id, name: spotifyTrack.name, artist: spotifyTrack.artist,
+        imageUrl: spotifyTrack.imageUrl, duration_ms: spotifyTrack.duration_ms, status: 'queued',
+        progress: 0, startTime: new Date().toISOString(), outputPath: null, error: null,
     };
     writeDownloadsDB(db);
 
-    startYtDlpDownload(downloadId, searchQuery, outputTemplate);
+    runDownloadAttempt(downloadId, spotifyTrack, false);
     return { downloadId, status: 'queued', spotifyId: spotifyTrack.id };
 }
 
-function startYtDlpDownload(downloadId, searchQuery, outputTemplate) {
+function runDownloadAttempt(downloadId, spotifyTrack, isFallback) {
     const db = readDownloadsDB();
     db.downloads[downloadId].status = 'downloading';
     writeDownloadsDB(db);
 
-    console.log(`[yt-dlp] Searching for: "${searchQuery}"`);
-    
-    const args = [
-        '--no-playlist',
-        '--audio-quality','0',
-        '--format', 'bestaudio[ext=m4a]/bestaudio/best',
-        '--output', outputTemplate,
-        '--no-warnings',
+    const downloadsDir = process.env.DOWNLOADS_DIR || './downloads';
+    const outputTemplate = path.join(downloadsDir, `${downloadId}.%(ext)s`);
+
+    let searchQuery, filterArgs = [];
+    if (spotifyTrack.artist === 'YouTube Search') {
+        searchQuery = spotifyTrack.name;
+    } else if (isFallback) {
+        searchQuery = `${spotifyTrack.name} ${spotifyTrack.artist}`;
+    } else {
+        searchQuery = `"${spotifyTrack.name} - ${spotifyTrack.artist} official audio"`;
+        if (spotifyTrack.duration_ms) {
+            const durationInSeconds = spotifyTrack.duration_ms / 1000;
+            const tolerance = 15;
+            filterArgs.push('--match-filter', `duration > ${durationInSeconds - tolerance} & duration < ${durationInSeconds + tolerance}`);
+        }
+    }
+
+    const baseArgs = [
+        '--no-playlist', '--audio-quality', '0', '--format', 'bestaudio[ext=m4a]/bestaudio/best',
+        '--output', outputTemplate, '--retries', '3', '--no-mtime', '--add-metadata',
         `ytsearch1:"${searchQuery}"`,
     ];
 
-    const ytdlp = spawn('yt-dlp', args);
+    if (fs.existsSync(cookiesPath)) {
+        baseArgs.unshift('--cookies', cookiesPath);
+        console.log(`[yt-dlp] Using cookies file at: ${cookiesPath}`);
+    } else {
+        console.warn(`[yt-dlp] WARNING: Cookies file not found at ${cookiesPath}. Downloads may fail.`);
+    }
+
+    const ytdlp = spawn('yt-dlp', [...baseArgs, ...filterArgs]);
     activeDownloads.set(downloadId, ytdlp);
 
     ytdlp.on('close', (code) => {
         activeDownloads.delete(downloadId);
         const finalDb = readDownloadsDB();
         const downloadInfo = finalDb.downloads[downloadId];
-
-        if (!downloadInfo) return; 
+        if (!downloadInfo) return;
 
         if (code === 0) {
-            const expectedPath = path.join(process.env.DOWNLOADS_DIR || './downloads', `${downloadId}.m4a`);
-            
-            if (fs.existsSync(expectedPath)) {
-                console.log(`✅ Download successful. Updating DB for ${downloadId}.`);
+            const possibleExtensions = ['m4a', 'opus', 'webm', 'mp3'];
+            let foundPath = '';
+            for (const ext of possibleExtensions) {
+                const testPath = path.join(downloadsDir, `${downloadId}.${ext}`);
+                if (fs.existsSync(testPath)) {
+                    foundPath = testPath;
+                    break;
+                }
+            }
+
+            if (foundPath) {
+                const finalPath = path.join(downloadsDir, `${downloadId}.m4a`);
+                if (foundPath !== finalPath) {
+                    try {
+                        fs.renameSync(foundPath, finalPath);
+                    } catch(renameError) {
+                        console.error(`Failed to rename ${foundPath} to ${finalPath}`, renameError);
+                        handleFailure(downloadInfo.downloadId, spotifyTrack, `Failed to standardize file name.`, isFallback);
+                        return;
+                    }
+                }
+                console.log(`✅ Download successful for ${downloadId}`);
                 downloadInfo.status = 'completed';
-                downloadInfo.outputPath = expectedPath;
+                downloadInfo.outputPath = finalPath;
                 downloadInfo.completedTime = new Date().toISOString();
+                writeDownloadsDB(finalDb);
             } else {
-                console.error(`❌ yt-dlp exited successfully, but file not found at ${expectedPath}`);
-                downloadInfo.status = 'failed';
-                downloadInfo.error = 'File not found after successful download.';
+                 handleFailure(downloadInfo.downloadId, spotifyTrack, 'File not found after successful download process.', isFallback);
             }
         } else {
-            console.error(`❌ Download failed for ${downloadId} with exit code ${code}.`);
-            downloadInfo.status = 'failed';
-            downloadInfo.error = `yt-dlp exited with code ${code}. Check server logs for stderr.`;
-        }
-        
-        writeDownloadsDB(finalDb);
-    });
-
-    ytdlp.stderr.on('data', (data) => {
-        console.error(`[yt-dlp-stderr] for ${downloadId}: ${data.toString().trim()}`);
-    });
-
-    ytdlp.on('error', (error) => {
-        activeDownloads.delete(downloadId);
-        const finalDb = readDownloadsDB();
-        if (finalDb.downloads[downloadId]) {
-            finalDb.downloads[downloadId].status = 'failed';
-            finalDb.downloads[downloadId].error = `Failed to start yt-dlp: ${error.message}`;
-            writeDownloadsDB(finalDb);
+            handleFailure(downloadInfo.downloadId, spotifyTrack, `yt-dlp exited with code ${code}.`, isFallback);
         }
     });
+    
+    ytdlp.stderr.on('data', data => console.error(`[yt-dlp-stderr] ${downloadId}: ${data.toString().trim()}`));
+    ytdlp.on('error', error => handleFailure(downloadId, spotifyTrack, `Failed to start yt-dlp: ${error.message}`, isFallback));
+}
+
+function handleFailure(downloadId, spotifyTrack, errorMessage, wasFallback) {
+    console.error(`❌ Attempt failed for ${downloadId}: ${errorMessage}`);
+    if (!wasFallback && spotifyTrack.artist !== 'YouTube Search') {
+        console.log(`- Retrying with fallback search for ${downloadId}`);
+        runDownloadAttempt(downloadId, spotifyTrack, true);
+    } else {
+        console.error(`❌ Fallback also failed for ${downloadId}. Marking as failed.`);
+        const db = readDownloadsDB();
+        if (db.downloads[downloadId]) {
+            db.downloads[downloadId].status = 'failed';
+            db.downloads[downloadId].error = errorMessage;
+            writeDownloadsDB(db);
+        }
+    }
 }
 
 async function getCompletedDownloads() {
     const db = readDownloadsDB();
-    if (!db.downloads) return [];
-    return Object.values(db.downloads).filter(d => d.status === 'completed');
+    return Object.values(db.downloads || {}).filter(d => d.status === 'completed');
 }
-
 async function getDownloadStatus(downloadId) {
     const db = readDownloadsDB();
     return db.downloads[downloadId] || null;
 }
-
 async function getAllTrackStatuses() {
     const db = readDownloadsDB();
-    if (!db.downloads) return [];
-    return Object.values(db.downloads);
+    return Object.values(db.downloads || {});
 }
-
 async function cancelDownload(downloadId) {
     const process = activeDownloads.get(downloadId);
     if (process) {
@@ -157,9 +171,6 @@ async function cancelDownload(downloadId) {
 }
 
 module.exports = {
-  downloadTrack,
-  getDownloadStatus,
-  getCompletedDownloads,
-  cancelDownload,
-  getAllTrackStatuses,
+  downloadTrack, getDownloadStatus, getCompletedDownloads,
+  cancelDownload, getAllTrackStatuses,
 };

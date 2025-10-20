@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { fetchWithRetry } from '../utils/fetchWithRetry';
+import { useNetworkStatus } from './NetworkStatusContext';
 
 export interface Track {
   spotifyId: string;
@@ -24,6 +26,7 @@ interface PlaylistContextType {
   addTrackToPlaylist: (playlistId: string, track: Track) => Promise<Playlist | undefined>;
   getPlaylistById: (playlistId: string) => Playlist | undefined;
   updatePlaylistImage: (playlistId: string, imageFile: File) => Promise<void>;
+  importPlaylist: (url: string) => Promise<'success' | string>;
 }
 
 const PlaylistContext = createContext<PlaylistContextType | undefined>(undefined);
@@ -43,6 +46,7 @@ interface PlaylistProviderProps {
 export const PlaylistProvider: React.FC<PlaylistProviderProps> = ({ children, token }) => {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [loading, setLoading] = useState(true);
+  const { isOnline } = useNetworkStatus();
 
   const fetchPlaylists = useCallback(async () => {
     if (!token) {
@@ -52,7 +56,7 @@ export const PlaylistProvider: React.FC<PlaylistProviderProps> = ({ children, to
     }
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/playlists`, {
+      const res = await fetchWithRetry(`${API_URL}/api/playlists`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -60,20 +64,30 @@ export const PlaylistProvider: React.FC<PlaylistProviderProps> = ({ children, to
         setPlaylists(data || []);
       }
     } catch (error) {
-      console.error('[PLAYLISTS] Error fetching playlists:', error);
+      console.error('[PLAYLISTS] Error fetching playlists after retries:', error);
     } finally {
       setLoading(false);
     }
   }, [token]);
 
+  // --- RESILIENCE FIX ---
+  // Re-fetch playlists when the app comes back online and there are none loaded.
+  useEffect(() => {
+      if (isOnline && token && playlists.length === 0) {
+          console.log('[PlaylistContext] Network is back. Re-fetching playlists...');
+          fetchPlaylists();
+      }
+  }, [isOnline, token, playlists, fetchPlaylists]);
+
   useEffect(() => {
     fetchPlaylists();
   }, [fetchPlaylists]);
 
+  // ... (the rest of the functions: addTrackToPlaylist, createPlaylist, etc. remain the same)
   const addTrackToPlaylist = async (playlistId: string, track: Track) => {
     if (!token) return;
     try {
-      const res = await fetch(`${API_URL}/api/playlists/${playlistId}/tracks`, {
+      const res = await fetchWithRetry(`${API_URL}/api/playlists/${playlistId}/tracks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(track),
@@ -94,7 +108,7 @@ export const PlaylistProvider: React.FC<PlaylistProviderProps> = ({ children, to
   const createPlaylist = async (name: string, trackToAdd?: Track) => {
     if (!token) return;
     try {
-      const res = await fetch(`${API_URL}/api/playlists`, {
+      const res = await fetchWithRetry(`${API_URL}/api/playlists`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name, description: '' }),
@@ -102,7 +116,6 @@ export const PlaylistProvider: React.FC<PlaylistProviderProps> = ({ children, to
       if (res.ok) {
         const newPlaylist = await res.json();
         if (trackToAdd) {
-          // Immediately add the track to the new playlist
           const updatedPlaylist = await addTrackToPlaylist(newPlaylist._id, trackToAdd);
           if (updatedPlaylist) {
             setPlaylists(prev => [...prev, updatedPlaylist]);
@@ -128,7 +141,7 @@ export const PlaylistProvider: React.FC<PlaylistProviderProps> = ({ children, to
     formData.append('image', imageFile);
 
     try {
-        const res = await fetch(`${API_URL}/api/playlists/${playlistId}/image`, {
+        const res = await fetchWithRetry(`${API_URL}/api/playlists/${playlistId}/image`, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${token}` },
             body: formData,
@@ -146,7 +159,27 @@ export const PlaylistProvider: React.FC<PlaylistProviderProps> = ({ children, to
     }
   };
 
-  const value = { playlists, loading, createPlaylist, addTrackToPlaylist, getPlaylistById, updatePlaylistImage };
+  const importPlaylist = async (url: string): Promise<'success' | string> => {
+    if (!token) return 'You must be logged in to import playlists.';
+    try {
+      const res = await fetchWithRetry(`${API_URL}/api/playlists/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPlaylists(prev => [data, ...prev]);
+        return 'success';
+      } else {
+        throw new Error(data.message || 'Failed to import playlist.');
+      }
+    } catch (error) {
+      return error.message;
+    }
+  };
+
+  const value = { playlists, loading, createPlaylist, addTrackToPlaylist, getPlaylistById, updatePlaylistImage, importPlaylist };
 
   return (
     <PlaylistContext.Provider value={value}>

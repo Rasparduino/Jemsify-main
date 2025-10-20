@@ -1,8 +1,49 @@
 import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, Loader, Play, PlusCircle } from 'lucide-react';
+import { ChevronDown, Loader, Play, PlusCircle, ListPlus } from 'lucide-react';
 import { useSpotify, Track } from '../context/SpotifyContext';
-import { useServer } from '../context/ServerContext';
+import { DownloadButton } from './DownloadButton'; // Import the new button
+
+const TrackItem: React.FC<{
+  track: Track;
+  index: number;
+  context: Track[];
+  onPlay: (track: Track, context: Track[]) => void;
+  onAddToQueue: (track: Track) => void;
+  onAddToPlaylist: (track: Track) => void;
+}> = ({ track, index, context, onPlay, onAddToQueue, onAddToPlaylist }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <motion.div layout className="bg-secondary/40 rounded-lg overflow-hidden transition-colors">
+      <div onClick={() => setIsExpanded(!isExpanded)} className="flex items-center gap-3 p-2 cursor-pointer">
+        <span className="w-6 text-center text-text-secondary font-mono text-sm">{index + 1}</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-text-primary truncate">{track.name}</p>
+          <p className="text-xs text-text-secondary truncate">{track.artist}</p>
+        </div>
+      </div>
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            key="content"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            className="flex justify-evenly items-center py-2 border-t border-secondary/50"
+          >
+            <button onClick={() => onPlay(track, context)} title="Play" className="p-2 rounded-full text-text-secondary hover:text-accent transition-colors"><Play size={22} /></button>
+            <button onClick={() => onAddToQueue(track)} title="Add to queue" className="p-2 rounded-full text-text-secondary hover:text-accent transition-colors"><ListPlus size={22} /></button>
+            <button onClick={() => onAddToPlaylist(track)} title="Add to playlist" className="p-2 rounded-full text-text-secondary hover:text-accent transition-colors"><PlusCircle size={22} /></button>
+            {/* Replace old logic with the new component */}
+            <DownloadButton track={track} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+};
 
 interface Album {
     id: string;
@@ -23,11 +64,11 @@ export const AlbumWithTracks: React.FC<AlbumWithTracksProps> = ({ album, onAlbum
     const [isExpanded, setIsExpanded] = useState(false);
     const [tracks, setTracks] = useState<Track[]>([]);
     const [isLoading, setIsLoading] = useState(false);
-    const { isDownloading, downloadTrack } = useServer();
+    const { addToQueue } = useSpotify();
     const API_URL = import.meta.env.VITE_API_BASE_URL;
 
     const fetchTracks = useCallback(async () => {
-        if (tracks.length > 0) return; // Don't re-fetch
+        if (tracks.length > 0) return;
         setIsLoading(true);
         try {
             const res = await fetch(`${API_URL}/api/spotify/album/${album.id}`);
@@ -58,18 +99,6 @@ export const AlbumWithTracks: React.FC<AlbumWithTracksProps> = ({ album, onAlbum
         }
     };
 
-    const handleTrackClick = (track: Track) => {
-        onTrackSelect(track, tracks);
-        if (!isDownloading(track.spotifyId)) {
-            downloadTrack({
-                id: track.spotifyId,
-                name: track.name,
-                artist: track.artist,
-                imageUrl: track.imageUrl
-            });
-        }
-    };
-
     return (
         <div className="bg-secondary/30 rounded-lg overflow-hidden">
             <button onClick={handleToggle} className="w-full flex items-center gap-4 p-3 text-left hover:bg-secondary/50 transition-colors">
@@ -90,22 +119,18 @@ export const AlbumWithTracks: React.FC<AlbumWithTracksProps> = ({ album, onAlbum
                         exit={{ height: 0, opacity: 0 }}
                         transition={{ duration: 0.3, ease: "easeInOut" }}
                     >
-                        <div className="pt-1 pb-2 px-2">
+                        <div className="pt-1 pb-2 px-2 space-y-1">
                             {isLoading && <div className="flex justify-center p-4"><Loader className="animate-spin text-accent" /></div>}
                             {!isLoading && tracks.map((track, index) => (
-                                <div key={track.spotifyId} className="flex items-center gap-3 p-2 group hover:bg-secondary/40 rounded-md cursor-pointer" onClick={() => handleTrackClick(track)}>
-                                    <span className="w-6 text-center text-text-secondary font-mono text-sm">{index + 1}</span>
-                                    <div className="flex-1 min-w-0">
-                                        <p className="text-text-primary truncate">{track.name}</p>
-                                        <p className="text-xs text-text-secondary truncate">{track.artist}</p>
-                                    </div>
-                                    <button onClick={(e) => { e.stopPropagation(); openPlaylistModal(track); }} className="p-1 text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <PlusCircle size={20} />
-                                    </button>
-                                    <div className="w-8 h-8 flex items-center justify-center">
-                                      {isDownloading(track.spotifyId) ? <Loader size={18} className="animate-spin text-blue-500" /> : <Play size={18} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />}
-                                    </div>
-                                </div>
+                                <TrackItem
+                                    key={track.spotifyId}
+                                    track={track}
+                                    index={index}
+                                    context={tracks}
+                                    onPlay={onTrackSelect}
+                                    onAddToQueue={addToQueue}
+                                    onAddToPlaylist={openPlaylistModal}
+                                />
                             ))}
                         </div>
                     </motion.div>

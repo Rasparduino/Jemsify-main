@@ -7,9 +7,22 @@ const dbPath = path.join(__dirname, '..', 'db.json');
 const readDB = () => {
   try {
     const data = fs.readFileSync(dbPath, 'utf-8');
-    return JSON.parse(data);
+    // If file is empty, it's not valid JSON, so we start with an empty object.
+    const dbData = data ? JSON.parse(data) : {};
+    
+    // --- FIX: Ensure the basic structure is always present ---
+    // If 'users' key doesn't exist, create an empty array.
+    if (!dbData.users) {
+      dbData.users = [];
+    }
+    // If 'playlists' key doesn't exist, create an empty array.
+    if (!dbData.playlists) {
+      dbData.playlists = [];
+    }
+    
+    return dbData;
   } catch (error) {
-    console.error("Could not read database file.", error);
+    console.error("Could not read or parse database file.", error);
     // Return a default structure if file is empty or corrupt
     return { users: [], playlists: [] };
   }

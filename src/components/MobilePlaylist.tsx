@@ -1,11 +1,61 @@
-import React, { useRef } from 'react';
-import { ChevronLeft, Play, Download, Loader, Music, Heart, Edit } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { ChevronLeft, Play, Download, Edit, ListPlus, PlusCircle, Music, Heart } from 'lucide-react';
 import { usePlaylists, Playlist } from '../context/PlaylistContext';
 import { useSpotify, Track } from '../context/SpotifyContext';
-import { useServer } from '../context/ServerContext';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { GradientArt } from './GradientArt';
 import { PlaylistCover } from './PlaylistCover';
+import { PlaylistSelectionModal } from './PlaylistSelectionModal';
+import { DownloadButton } from './DownloadButton'; // Import the new button
+
+const containerVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.05 } }, };
+const itemVariants = { hidden: { x: -20, opacity: 0 }, visible: { x: 0, opacity: 1 }, };
+
+const TrackItem: React.FC<{
+  track: Track;
+  context: Track[];
+  onPlay: (track: Track, context: Track[]) => void;
+  onAddToQueue: (track: Track) => void;
+  onAddToPlaylist: (track: Track) => void;
+}> = ({ track, context, onPlay, onAddToQueue, onAddToPlaylist }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <motion.div layout className="bg-secondary/30 rounded-lg overflow-hidden transition-colors" variants={itemVariants}>
+      <div onClick={() => setIsExpanded(!isExpanded)} className="flex items-center gap-4 p-2 cursor-pointer">
+        {track.imageUrl ? (
+            <img src={track.imageUrl} alt={track.name} className="w-12 h-12 rounded-md object-cover bg-gray-800" />
+        ) : (
+            <GradientArt id={track.spotifyId} className="w-12 h-12 rounded-md flex-shrink-0" />
+        )}
+        <div className="flex-1 min-w-0">
+          <h3 className="font-semibold text-text-primary truncate">{track.name}</h3>
+          <p className="text-sm text-text-secondary truncate">{track.artist}</p>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            key="content"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            className="flex justify-evenly items-center py-2 border-t border-secondary/50"
+          >
+            <button onClick={() => onPlay(track, context)} title="Play" className="p-2 rounded-full text-text-secondary hover:text-accent transition-colors"><Play size={22} /></button>
+            <button onClick={() => onAddToQueue(track)} title="Add to queue" className="p-2 rounded-full text-text-secondary hover:text-accent transition-colors"><ListPlus size={22} /></button>
+            <button onClick={() => onAddToPlaylist(track)} title="Add to playlist" className="p-2 rounded-full text-text-secondary hover:text-accent transition-colors"><PlusCircle size={22} /></button>
+            {/* Replace old logic with the new component */}
+            <DownloadButton track={track} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+};
+
 
 interface MobilePlaylistProps {
   playlistId: string;
@@ -14,9 +64,9 @@ interface MobilePlaylistProps {
 
 export const MobilePlaylist: React.FC<MobilePlaylistProps> = ({ playlistId, onBack }) => {
   const { getPlaylistById, updatePlaylistImage } = usePlaylists();
-  const { playTrack, likedTracks } = useSpotify();
-  const { isDownloading } = useServer();
+  const { playTrack, likedTracks, addToQueue } = useSpotify();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [modalTrack, setModalTrack] = useState<Track | null>(null);
 
   if (playlistId === 'downloads') {
       return (
@@ -81,12 +131,10 @@ export const MobilePlaylist: React.FC<MobilePlaylistProps> = ({ playlistId, onBa
       </div>
     );
   }
-  
-  const containerVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.05 } }, };
-  const itemVariants = { hidden: { x: -20, opacity: 0 }, visible: { x: 0, opacity: 1 }, };
 
   return (
     <div className="pb-4 min-h-full">
+      {modalTrack && <PlaylistSelectionModal track={modalTrack} onClose={() => setModalTrack(null)} />}
       <input
         type="file"
         ref={fileInputRef}
@@ -129,29 +177,18 @@ export const MobilePlaylist: React.FC<MobilePlaylistProps> = ({ playlistId, onBa
         className="px-4 space-y-2"
       >
         {tracks.length > 0 ? (
-          tracks.map((track) => (
-            <motion.div key={track.spotifyId} variants={itemVariants}>
-              <div
-                onClick={() => playTrack(track, tracks)}
-                className="flex items-center gap-4 p-2 bg-secondary/30 hover:bg-secondary rounded-lg transition-colors cursor-pointer"
-              >
-                {track.imageUrl ? (
-                    <img src={track.imageUrl} alt={track.name} className="w-12 h-12 rounded-md object-cover bg-gray-800" />
-                ) : (
-                    <GradientArt id={track.spotifyId} className="w-12 h-12 rounded-md flex-shrink-0" />
-                )}
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-text-primary truncate">{track.name}</h3>
-                  <p className="text-sm text-text-secondary truncate">{track.artist}</p>
-                </div>
-                <div className="flex items-center">
-                  {isDownloading(track.spotifyId) ? (
-                    <Loader className="w-5 h-5 text-blue-400 animate-spin" />
-                  ) : null}
-                </div>
-              </div>
-            </motion.div>
-          ))
+          tracks
+            .filter(track => track && track.spotifyId && track.name)
+            .map((track) => (
+              <TrackItem
+                key={track.spotifyId}
+                track={track}
+                context={tracks}
+                onPlay={playTrack}
+                onAddToQueue={addToQueue}
+                onAddToPlaylist={setModalTrack}
+              />
+            ))
         ) : (
           <motion.div initial={{ opacity: 0}} animate={{ opacity: 1, transition: { delay: 0.2 }}} className="text-center py-16 text-text-secondary">
               {playlistId === 'liked-songs' ? <Heart size={48} className="mx-auto mb-4"/> : <Music size={48} className="mx-auto mb-4"/>}

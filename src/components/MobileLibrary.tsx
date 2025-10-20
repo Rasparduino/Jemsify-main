@@ -1,19 +1,20 @@
 import React, { useState } from 'react';
-import { Heart, Plus, Loader } from 'lucide-react';
+import { Heart, Plus, Loader, DownloadCloud } from 'lucide-react';
 import { usePlaylists } from '../context/PlaylistContext';
 import { useSpotify } from '../context/SpotifyContext';
 import { PlaylistCover } from './PlaylistCover';
 import { CreatePlaylistModal } from './CreatePlaylistModal';
+import { ImportPlaylistModal } from './ImportPlaylistModal';
 
 interface MobileLibraryProps {
   onPlaylistSelect: (playlistId: string) => void;
-  onViewChange: (view: 'home' | 'search' | 'library') => void;
 }
 
 export const MobileLibrary: React.FC<MobileLibraryProps> = ({ onPlaylistSelect }) => {
-  const { playlists, loading, createPlaylist } = usePlaylists();
+  const { playlists, loading, createPlaylist, importPlaylist } = usePlaylists();
   const { likedTracks } = useSpotify();
   const [isCreatingPlaylist, setIsCreatingPlaylist] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   const handleCreatePlaylist = () => {
     setIsCreatingPlaylist(true);
@@ -28,7 +29,13 @@ export const MobileLibrary: React.FC<MobileLibraryProps> = ({ onPlaylistSelect }
       {isCreatingPlaylist && (
         <CreatePlaylistModal 
           onClose={() => setIsCreatingPlaylist(false)} 
-          onCreate={createPlaylist} 
+          onCreate={name => createPlaylist(name)} 
+        />
+      )}
+      {isImportModalOpen && (
+        <ImportPlaylistModal
+            onClose={() => setIsImportModalOpen(false)}
+            onImport={importPlaylist}
         />
       )}
 
@@ -57,9 +64,14 @@ export const MobileLibrary: React.FC<MobileLibraryProps> = ({ onPlaylistSelect }
       <div className="px-4">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-bold text-text-primary">Your Playlists</h2>
-          <button onClick={handleCreatePlaylist} className="p-2 rounded-full hover:bg-secondary text-text-secondary hover:text-text-primary">
-            <Plus size={20} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setIsImportModalOpen(true)} className="p-2 rounded-full hover:bg-secondary text-text-secondary hover:text-text-primary" title="Import Playlist">
+                <DownloadCloud size={20} />
+            </button>
+            <button onClick={handleCreatePlaylist} className="p-2 rounded-full hover:bg-secondary text-text-secondary hover:text-text-primary" title="Create Playlist">
+                <Plus size={20} />
+            </button>
+          </div>
         </div>
         
         {loading ? (
